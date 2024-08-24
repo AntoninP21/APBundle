@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { downloadMedia } = require('./mediaDownloader'); 
+const { displayDownloadMenu, handleInteraction } = require('./mediaDownloader');
 
 const client = new Client({
     intents: [
@@ -10,7 +10,7 @@ const client = new Client({
     ],
 });
 
-const token = process.env.TOKEN;
+const token = process.env.token;
 
 client.once(Events.ClientReady, () => {
     console.log(`Connecté en tant que ${client.user.tag}`);
@@ -20,12 +20,11 @@ client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
     if (message.content === '!menu') {
-        // Créer les boutons pour l'interaction
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('download')
-                    .setLabel('Télécharger médias du salon')
+                    .setCustomId('download_menu')
+                    .setLabel('Télécharger médias')
                     .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
                     .setCustomId('quit')
@@ -33,7 +32,6 @@ client.on(Events.MessageCreate, async (message) => {
                     .setStyle(ButtonStyle.Danger),
             );
 
-        // Envoyer un message avec les boutons
         await message.channel.send({
             content: 'Que souhaitez-vous faire ?',
             components: [row]
@@ -44,11 +42,10 @@ client.on(Events.MessageCreate, async (message) => {
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
 
-    if (interaction.customId === 'download') {
-        await interaction.reply('Téléchargement des médias en cours...');
-        downloadMedia(interaction.channelId);  // Lance le téléchargement des médias
-    } else if (interaction.customId === 'quit') {
-        await interaction.reply('Action annulée.');
+    if (interaction.customId === 'download_menu') {
+        displayDownloadMenu(interaction);
+    } else {
+        handleInteraction(interaction, client); // Utiliser handleInteraction pour gérer les actions des boutons
     }
 });
 
