@@ -40,12 +40,12 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-    if (!interaction.isButton()) return;
+    if (!interaction.isButton() && !interaction.isModalSubmit()) return;
 
     if (interaction.customId === 'download_menu') {
         displayDownloadMenu(interaction);
     } else {
-        handleInteraction(interaction, client); // Utiliser handleInteraction pour gérer les actions des boutons
+        handleInteraction(interaction, client);
     }
 });
 

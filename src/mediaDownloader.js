@@ -1,9 +1,9 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const fs = require('fs');
-const axios = require('axios');
-const { format, subDays, subMonths, subYears, subHours } = require('date-fns');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const fs = require('fs').promises;
+const path = require('path');
+const { zip } = require('zip-a-folder');
+const { format, subDays, subMonths, subYears, subHours, parse } = require('date-fns');
 
-// Fonction pour afficher le menu de période de téléchargement
 const displayDownloadMenu = async (interaction) => {
     const row1 = new ActionRowBuilder()
         .addComponents(
@@ -47,11 +47,11 @@ const displayDownloadMenu = async (interaction) => {
     });
 };
 
-// Fonction pour gérer le téléchargement des médias en fonction de la période choisie
-const downloadMedia = async (channelId, client, startDate, endDate) => {
-    console.log(`Téléchargement des médias du salon avec l'ID ${channelId} entre ${startDate} et ${endDate}...`);
+const collectMediaLinks = async (channelId, client, startDate, endDate) => {
+    console.log(`Collecte des liens des médias du salon avec l'ID ${channelId} entre ${startDate} et ${endDate}...`);
 
     const channel = await client.channels.fetch(channelId);
+    let mediaLinks = [];
 
     if (channel && channel.isTextBased()) {
         const messages = await channel.messages.fetch({ limit: 100 });
@@ -59,23 +59,8 @@ const downloadMedia = async (channelId, client, startDate, endDate) => {
         messages.forEach(message => {
             if (message.createdAt >= new Date(startDate) && message.createdAt <= new Date(endDate)) {
                 if (message.attachments.size > 0) {
-                    message.attachments.forEach(async (attachment) => {
-                        const url = attachment.url;
-                        const filename = `./medias/${attachment.name}`;
-
-                        try {
-                            const response = await axios({
-                                url,
-                                method: 'GET',
-                                responseType: 'stream',
-                            });
-
-                            response.data.pipe(fs.createWriteStream(filename))
-                                .on('finish', () => console.log(`${filename} téléchargé avec succès.`))
-                                .on('error', (error) => console.error(`Erreur lors du téléchargement de ${filename}: `, error));
-                        } catch (error) {
-                            console.error(`Erreur lors de la demande de téléchargement de ${filename}: `, error);
-                        }
+                    message.attachments.forEach((attachment) => {
+                        mediaLinks.push(attachment.url);
                     });
                 }
             }
@@ -83,49 +68,135 @@ const downloadMedia = async (channelId, client, startDate, endDate) => {
     } else {
         console.error('Le canal n\'est pas un salon textuel.');
     }
+
+    return mediaLinks;
 };
 
-// Fonction pour traiter les interactions des boutons
+const createZipWithLinks = async (mediaLinks, interaction, period) => {
+    const tempDir = path.join(__dirname, 'temp');
+    const zipFileName = `media_links_${period}.zip`;
+    const zipFilePath = path.join(__dirname, zipFileName);
+
+    try {
+        await fs.mkdir(tempDir, { recursive: true });
+
+        // Créer un fichier texte avec tous les liens
+        const allLinksContent = mediaLinks.join('\n');
+        await fs.writeFile(path.join(tempDir, 'all_media_links.txt'), allLinksContent);
+
+        // Créer des fichiers HTML individuels pour chaque lien
+        for (let i = 0; i < mediaLinks.length; i++) {
+            const link = mediaLinks[i];
+            const htmlContent = `
+            <!DOCTYPE html>
+            <html lang="fr">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Média ${i + 1}</title>
+            </head>
+            <body>
+                <script>
+                    window.location.href = "${link}";
+                </script>
+            </body>
+            </html>`;
+            await fs.writeFile(path.join(tempDir, `media_${i + 1}.html`), htmlContent);
+        }
+
+        // Créer le zip
+        await zip(tempDir, zipFilePath);
+
+        // Envoyer le fichier zip
+        await interaction.followUp({
+            content: `Voici les liens des médias pour la période : ${period}`,
+            files: [{ attachment: zipFilePath, name: zipFileName }]
+        });
+
+        // Nettoyer les fichiers temporaires
+        await fs.rm(tempDir, { recursive: true, force: true });
+        await fs.unlink(zipFilePath);
+    } catch (error) {
+        console.error('Erreur lors de la création du zip :', error);
+        await interaction.followUp('Une erreur est survenue lors de la création du fichier zip.');
+    }
+};
+
 const handleInteraction = async (interaction, client) => {
-    if (!interaction.isButton()) return;
+    if (!interaction.isButton() && !interaction.isModalSubmit()) return;
 
     const now = new Date();
-    let startDate, endDate;
+    let startDate, endDate, period;
 
-    switch (interaction.customId) {
-        case 'download_365_days':
-            startDate = subYears(now, 1);
-            endDate = now;
-            break;
-        case 'download_6_months':
-            startDate = subMonths(now, 6);
-            endDate = now;
-            break;
-        case 'download_1_month':
-            startDate = subMonths(now, 1);
-            endDate = now;
-            break;
-        case 'download_1_week':
-            startDate = subDays(now, 7);
-            endDate = now;
-            break;
-        case 'download_24_hours':
-            startDate = subHours(now, 24);
-            endDate = now;
-            break;
-        case 'choose_period':
-            await interaction.reply({ content: 'Veuillez répondre avec la période au format "jj/mm/aaaa - jj/mm/aaaa".', ephemeral: true });
-            // Ici, tu peux ajouter du code pour traiter le message suivant de l'utilisateur pour obtenir les dates personnalisées
-            return;
-        case 'cancel_download':
-            await interaction.update({ content: 'Téléchargement annulé.', components: [] });
-            return;
-        default:
-            return;
+    if (interaction.customId === 'choose_period') {
+        const modal = new ModalBuilder()
+            .setCustomId('period_modal')
+            .setTitle('Choisir une période');
+
+        const periodInput = new TextInputBuilder()
+            .setCustomId('period_input')
+            .setLabel('Entrez la période (jj/mm/aaaa - jj/mm/aaaa)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(periodInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
+        return;
     }
 
-    await interaction.update({ content: 'Téléchargement des médias en cours...', components: [] });
-    downloadMedia(interaction.channelId, client, format(startDate, 'yyyy-MM-dd'), format(endDate, 'yyyy-MM-dd'));
+    if (interaction.customId === 'period_modal') {
+        const userInput = interaction.fields.getTextInputValue('period_input');
+        const [startString, endString] = userInput.split('-').map(s => s.trim());
+        
+        startDate = parse(startString, 'dd/MM/yyyy', new Date());
+        endDate = parse(endString, 'dd/MM/yyyy', new Date());
+        
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+            await interaction.reply('Format de date invalide. Veuillez utiliser le format jj/mm/aaaa - jj/mm/aaaa.');
+            return;
+        }
+        
+        period = `${format(startDate, 'dd-MM-yyyy')}_to_${format(endDate, 'dd-MM-yyyy')}`;
+    } else {
+        switch (interaction.customId) {
+            case 'download_365_days':
+                startDate = subYears(now, 1);
+                endDate = now;
+                period = '365_days';
+                break;
+            case 'download_6_months':
+                startDate = subMonths(now, 6);
+                endDate = now;
+                period = '6_months';
+                break;
+            case 'download_1_month':
+                startDate = subMonths(now, 1);
+                endDate = now;
+                period = '1_month';
+                break;
+            case 'download_1_week':
+                startDate = subDays(now, 7);
+                endDate = now;
+                period = '1_week';
+                break;
+            case 'download_24_hours':
+                startDate = subHours(now, 24);
+                endDate = now;
+                period = '24_hours';
+                break;
+            case 'cancel_download':
+                await interaction.update({ content: 'Téléchargement annulé.', components: [] });
+                return;
+            default:
+                return;
+        }
+    }
+
+    await interaction.deferReply();
+    const mediaLinks = await collectMediaLinks(interaction.channelId, client, format(startDate, 'yyyy-MM-dd'), format(endDate, 'yyyy-MM-dd'));
+    await createZipWithLinks(mediaLinks, interaction, period);
 };
 
 module.exports = { displayDownloadMenu, handleInteraction };
