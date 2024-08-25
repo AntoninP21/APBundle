@@ -54,17 +54,32 @@ const collectMediaLinks = async (channelId, client, startDate, endDate) => {
     let mediaLinks = [];
 
     if (channel && channel.isTextBased()) {
-        const messages = await channel.messages.fetch({ limit: 100 });
+        let lastMessageId;
+        let fetchComplete = false;
 
-        messages.forEach(message => {
-            if (message.createdAt >= new Date(startDate) && message.createdAt <= new Date(endDate)) {
-                if (message.attachments.size > 0) {
-                    message.attachments.forEach((attachment) => {
-                        mediaLinks.push(attachment.url);
-                    });
+        while (!fetchComplete) {
+            const options = { limit: 100 };
+            if (lastMessageId) options.before = lastMessageId;
+
+            const messages = await channel.messages.fetch(options);
+            if (messages.size === 0) break;
+
+            messages.forEach(message => {
+                if (message.createdAt >= new Date(startDate) && message.createdAt <= new Date(endDate)) {
+                    if (message.attachments.size > 0) {
+                        message.attachments.forEach((attachment) => {
+                            mediaLinks.push(attachment.url);
+                        });
+                    }
                 }
+            });
+
+            lastMessageId = messages.last().id;
+
+            if (messages.size < 100) {
+                fetchComplete = true;
             }
-        });
+        }
     } else {
         console.error('Le canal n\'est pas un salon textuel.');
     }
@@ -156,15 +171,20 @@ const handleInteraction = async (interaction, client) => {
     if (interaction.customId === 'period_modal') {
         const userInput = interaction.fields.getTextInputValue('period_input');
         const [startString, endString] = userInput.split('-').map(s => s.trim());
-        
+
+        // Par exemple, `01/08/2024` -> `2024-08-01`
         startDate = parse(startString, 'dd/MM/yyyy', new Date());
         endDate = parse(endString, 'dd/MM/yyyy', new Date());
-        
+
+        // Ajustement des heures pour inclure toute la journée
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setHours(23, 59, 59, 999);
+
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
             await interaction.reply('Format de date invalide. Veuillez utiliser le format jj/mm/aaaa - jj/mm/aaaa.');
             return;
         }
-        
+
         period = `${format(startDate, 'dd-MM-yyyy')}_to_${format(endDate, 'dd-MM-yyyy')}`;
     } else {
         switch (interaction.customId) {
@@ -202,7 +222,19 @@ const handleInteraction = async (interaction, client) => {
     }
 
     await interaction.deferReply();
-    const mediaLinks = await collectMediaLinks(interaction.channelId, client, format(startDate, 'yyyy-MM-dd'), format(endDate, 'yyyy-MM-dd'));
+
+    const mediaLinks = await collectMediaLinks(
+        interaction.channelId,
+        client,
+        format(startDate, 'yyyy-MM-dd HH:mm:ss'),
+        format(endDate, 'yyyy-MM-dd HH:mm:ss')
+    );
+
+    if (mediaLinks.length === 0) {
+        await interaction.followUp(`Aucun média trouvé pour la période sélectionnée : ${period}`);
+        return;
+    }
+
     await createZipWithLinks(mediaLinks, interaction, period);
 };
 
