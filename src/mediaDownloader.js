@@ -42,7 +42,7 @@ const displayDownloadMenu = async (interaction) => {
         );
 
     await interaction.update({
-        content: 'Choisissez la période des médias à télécharger :',
+        content: 'Télécharger les médias présents dans le salon depuis :',
         components: [row1, row2]
     });
 };
