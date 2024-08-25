@@ -87,13 +87,20 @@ const createZipWithLinks = async (mediaLinks, interaction, period) => {
         // Créer des fichiers HTML individuels pour chaque lien
         for (let i = 0; i < mediaLinks.length; i++) {
             const link = mediaLinks[i];
+
+            // Extraire le titre du lien en enlevant le début de l'URL
+            let title = link.replace('https://cdn.discordapp.com/attachments/', '');
+
+            // Nettoyer le titre pour qu'il soit compatible avec les noms de fichiers
+            title = title.replace(/[\/\\?%*:|"<>]/g, '_'); // Remplace les caractères spéciaux par des underscores
+
             const htmlContent = `
             <!DOCTYPE html>
             <html lang="fr">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Média ${i + 1}</title>
+                <title>${title}</title>
             </head>
             <body>
                 <script>
@@ -101,7 +108,7 @@ const createZipWithLinks = async (mediaLinks, interaction, period) => {
                 </script>
             </body>
             </html>`;
-            await fs.writeFile(path.join(tempDir, `media_${i + 1}.html`), htmlContent);
+            await fs.writeFile(path.join(tempDir, `media_${title}.html`), htmlContent);
         }
 
         // Créer le zip
